@@ -245,6 +245,9 @@ class Model:
         self.user_bought: dict[str, set[str]] = {}
         self.live_bought: dict[str, set[str]] = {}
         self.subcat_of: dict[str, str] = {}
+        self.cat_of: dict[str, str] = {}
+        self.price_of: dict[str, float] = {}
+        self.sales: dict[str, tuple[float, float]] = {}
         self.subcat_top: dict[str, list[tuple[str, float]]] = {}
         self.available: set[str] = set()
         self.popular: list[str] = []      # orden de relleno, siempre válido
@@ -274,6 +277,7 @@ class Model:
         self.user_bought = {r["u"]: set(r["ps"]) for r in safe_query("compras por usuario", sql_user_purchases(until))}
         # best sellers de siempre (= baseline / fallback oficial), para el grupo de control del A/B
         self.best_sellers = [p for _, p in sorted(((b, p) for p, (b, _) in sales.items() if b > 0), reverse=True)]
+        self.sales = sales
         top_b = max((b for b, _ in sales.values()), default=1.0) or 1.0
         self.pop = {p: (b / top_b) ** 0.5 for p, (b, _) in sales.items() if b > 0}
 
@@ -284,15 +288,17 @@ class Model:
     def refresh_catalog(self, catalog_rows: list[Record] | None = None, out_of_stock: set[str] | None = None) -> None:
         rows = catalog_rows if catalog_rows is not None else query(SQL_CATALOG, 30)
         oos = out_of_stock if out_of_stock is not None else {r["product_id"] for r in query(SQL_OUT_OF_STOCK, 10)}
-        available, subcat_of = set(), {}
+        available, subcat_of, cat_of, price_of = set(), {}, {}, {}
         by_sub: dict[str, list[str]] = defaultdict(list)
         for r in rows:
             p = r["product_id"]
             subcat_of[p] = r["subcategory"]
+            cat_of[p] = r.get("category", "")
+            price_of[p] = float(r.get("price_eur") or 0.0)
             if r["is_active"] in (True, 1, "true") and p not in oos:
                 available.add(p)
                 by_sub[r["subcategory"]].append(p)
-        self.subcat_of = subcat_of
+        self.subcat_of, self.cat_of, self.price_of = subcat_of, cat_of, price_of
         self.subcat_top = {s: self._rank_norm(ps) for s, ps in by_sub.items()}
         self.popular = [p for p in sorted(available, key=lambda p: -self._prior(p))]
         self.available = available
@@ -321,8 +327,18 @@ class Model:
     # ---- recomendación
     def recommend(self, recent_views: list[Record] | None, user_id: str = "", page: str = "",
                   w: dict | None = None) -> list[str]:
-        W = w if w is not None else globals()["W"]
+        score = self.scores(recent_views, user_id, w)
         avail = self.available
+        ranked = [p for p, _ in sorted(score.items(), key=lambda x: -x[1]) if p in avail]
+        out = ranked[:10]
+        if len(out) < 10:   # relleno: siempre 10 productos distintos y disponibles
+            have = set(out)
+            out += [p for p in self.popular if p not in have][: 10 - len(out)]
+        return out
+
+    def scores(self, recent_views: list[Record] | None, user_id: str = "", w: dict | None = None) -> dict[str, float]:
+        """Puntuación v1 de cada producto candidato (también la usa la v2 para elegir candidatos)."""
+        W = w if w is not None else globals()["W"]
         score: dict[str, float] = defaultdict(float)
         views = [v["product_id"] for v in (recent_views or []) if isinstance(v, dict) and v.get("product_id")]
 
@@ -358,13 +374,7 @@ class Model:
         for p in bought:
             if p in score:
                 score[p] *= ALREADY_BOUGHT
-
-        ranked = [p for p, _ in sorted(score.items(), key=lambda x: -x[1]) if p in avail]
-        out = ranked[:10]
-        if len(out) < 10:   # relleno: siempre 10 productos distintos y disponibles
-            have = set(out)
-            out += [p for p in self.popular if p not in have][: 10 - len(out)]
-        return out
+        return score
 
 
 # ---------------------------------------------------------------- autoajuste en vivo
@@ -386,18 +396,30 @@ GROUP BY v""", 30)
         got = {r["v"]: (int(r["n"]), int(r["buys"])) for r in rows}
         self.stats = {v: got.get(v, (0, 0)) for v in VARIANTS}
         ctrl = got.get("control", (0, 0))
-        line = "  ".join(f"{v}: {b}/{n}={b / n:.2%}" if n else f"{v}: -" for v, (n, b) in self.stats.items())
-        print(f"[bandit] control: {ctrl[1]}/{ctrl[0]}  {line}  → mejor ahora: {self.best()}")
+        base = ctrl[1] / ctrl[0] if ctrl[0] else None
+        total = sum(n for n, _ in self.stats.values()) or 1
+        print(f"\n[{time.strftime('%H:%M')}] Rendimiento en vivo (últimas {STATS_HOURS} h, compras reales):")
+        print(f"  {'versión':<12}{'clientes':>9}{'compras':>9}{'% compra':>10}{'vs baseline':>13}{'% tráfico':>11}")
+        if ctrl[0]:
+            print(f"  {'control':<12}{ctrl[0]:>9}{ctrl[1]:>9}{base:>10.2%}{'—':>13}{'':>11}")
+        for v, (n, b) in sorted(self.stats.items(), key=lambda x: -(x[1][1] / x[1][0] if x[1][0] else 0)):
+            rate = b / n if n else 0.0
+            lift = f"{(rate / base - 1):+.0%}" if base and n else "—"
+            star = "  ← IA" if v == "v2-gbm" else ""
+            print(f"  {v:<12}{n:>9}{b:>9}{rate:>10.2%}{lift:>13}{n / total:>11.0%}{star}")
+        print(f"  → mejor ahora: {self.best()} (pocas compras = mucha suerte: fiable a partir de ~50 compras por versión)\n")
 
     def best(self) -> str:
-        return max(VARIANTS, key=lambda v: (self.stats[v][1] + 1) / (self.stats[v][0] + 100))
+        return max(VARIANTS, key=lambda v: (self.stats.get(v, (0, 0))[1] + 1) / (self.stats.get(v, (0, 0))[0] + 100))
 
     def choose(self) -> str:
         if FINAL_MODE:
             return self.best()
         # prior Beta(1, 99) ≈ tasa del 1 %: sin datos, todas empiezan igual
-        return max(VARIANTS, key=lambda v: self.rng.betavariate(1 + self.stats[v][1],
-                                                                  99 + self.stats[v][0] - self.stats[v][1]))
+        def draw(v):
+            n, b = self.stats.get(v, (0, 0))
+            return self.rng.betavariate(1 + b, 99 + n - b)
+        return max(VARIANTS, key=draw)
 
 
 BANDIT = Bandit()
@@ -406,7 +428,7 @@ BANDIT = Bandit()
 # ---------------------------------------------------------------- bucle en vivo
 NEW_REQUESTS = """
 SELECT request_id::String AS request_id, user_id::String AS user_id,
-       context.page::String AS page, recent_views
+       context.page::String AS page, context.device::String AS device, recent_views
 FROM shop.requests
 ORDER BY ts DESC
 LIMIT 60"""
@@ -438,6 +460,17 @@ def main() -> None:
         except Exception as e:
             print(f"aviso: {fn.__name__} falló al arrancar: {e}")
     model.refresh_catalog()  # recalcula el orden con la tendencia ya cargada
+
+    v2live = None
+    if (Path(__file__).parent / "model_v2.pkl").exists():   # modelo entrenado con: python starter/v2.py train
+        try:
+            import v2
+            v2live = v2.V2Live(model)
+            VARIANTS["v2-gbm"] = None
+            print("  variante v2-gbm añadida al bandit")
+        except Exception:
+            traceback.print_exc()
+            print("aviso: no se pudo cargar la v2; seguimos con las variantes v1")
     try:
         BANDIT.refresh()
     except Exception as e:
@@ -462,6 +495,8 @@ def main() -> None:
                 try:
                     if arm == "control":
                         items = model.baseline()
+                    elif arm == "v2-gbm":
+                        items = v2live.recommend(req)
                     else:
                         items = model.recommend(req.get("recent_views"), req.get("user_id", ""), req.get("page", ""),
                                                 VARIANTS[arm])
