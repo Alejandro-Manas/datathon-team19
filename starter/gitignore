@@ -1,0 +1,5 @@
+.env
+__pycache__/
+.ipynb_checkpoints/
+.venv/
+starter/model_v2.pkl
