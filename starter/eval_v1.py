@@ -16,7 +16,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import recommender_v1 as v1  # noqa: E402
-from recommender import best_sellers  # noqa: E402
 
 N_TEST = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--n=")), 50000))
 
@@ -63,7 +62,7 @@ def evaluate(policy, test) -> dict:
             # compras esperadas por petición sumando los 10 huecos (aprox.: cada hueco por separado)
             "SNIPS_buy": round(sum(slot_r[j] / slot_w[j] for j in range(10) if slot_w[j]), 4),
             "buy_match": sum(slot_n),
-            "ms/req": round(1000 * (time.time() - t) / len(test), 2)}
+            "ms/req": round(1000 * (time.time() - t) / max(1, len(test)), 2)}
 
 
 def main() -> None:
@@ -81,9 +80,8 @@ def main() -> None:
                        "true AS is_active FROM shop.catalog", 60)
     model.refresh_catalog(catalog_rows=catalog, out_of_stock=set())   # offline: todo el catálogo disponible
 
-    best = best_sellers(until=cut)
     results = {
-        "baseline": evaluate(lambda r: best[:10], test),
+        "baseline": evaluate(lambda r: model.baseline(), test),
         "v1": evaluate(lambda r: model.recommend(r["recent_views"], r["user_id"], r["page"]), test),
     }
     if "--sweep" in sys.argv:   # combinaciones de pesos: ¿más peso a lo popular/calidad?

@@ -1,0 +1,73 @@
+{
+ "found_at": "2026-11-14 17:21:42",
+ "segments": {
+  "nuevo": {
+   "W": {
+    "buy_after_view": 3,
+    "carousel": 2,
+    "coview": 0.15,
+    "live_cooc": 1.5,
+    "self": 0.0,
+    "subcat": 1.5,
+    "copurchase": 5,
+    "trend": 0.5
+   },
+   "SNIPS_A": 0.0028,
+   "SNIPS_B": 0.0062,
+   "electropapis_A": 0.0012,
+   "electropapis_B": 0.0053,
+   "mejora": true
+  },
+  "sin_vistas": {
+   "W": {
+    "buy_after_view": 3,
+    "carousel": 2,
+    "coview": 1,
+    "live_cooc": 1.5,
+    "self": 2,
+    "subcat": 1.5,
+    "copurchase": 10,
+    "trend": 0.5
+   },
+   "SNIPS_A": 0.0021,
+   "SNIPS_B": 0.0203,
+   "electropapis_A": 0.0021,
+   "electropapis_B": 0.0203,
+   "mejora": false
+  },
+  "producto": {
+   "W": {
+    "buy_after_view": 3,
+    "carousel": 0.0,
+    "coview": 0.6,
+    "live_cooc": 1.5,
+    "self": 0.5,
+    "subcat": 1.5,
+    "copurchase": 10,
+    "trend": 0.5
+   },
+   "SNIPS_A": 0.0567,
+   "SNIPS_B": 0.0662,
+   "electropapis_A": 0.0485,
+   "electropapis_B": 0.0562,
+   "mejora": true
+  },
+  "categoria": {
+   "W": {
+    "buy_after_view": 1.5,
+    "carousel": 2,
+    "coview": 0.5,
+    "live_cooc": 1.5,
+    "self": 2,
+    "subcat": 0.0,
+    "copurchase": 20,
+    "trend": 0.5
+   },
+   "SNIPS_A": 0.0839,
+   "SNIPS_B": 0.0205,
+   "electropapis_A": 0.0797,
+   "electropapis_B": 0.016,
+   "mejora": true
+  }
+ }
+}

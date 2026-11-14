@@ -42,18 +42,19 @@ http.headers["Authorization"] = f"Bearer {os.environ['RAWTREE_API_KEY']}"
 MODEL_VERSION = "v1"   # prefijo; cada variante del bandit tiene su propio nombre
 Record = dict[str, Any]
 
-# Autoajuste en vivo (bandit con muestreo de Thompson):
+# Autoajuste en vivo POR TIPO DE CLIENTE (bandit contextual con muestreo de Thompson):
+#   - Cada cliente se clasifica en un tipo (ver segment(): nuevo, ve un producto nuevo, habitual sin vistas,
+#     habitual en ficha de producto, habitual en categoría).
+#   - Para cada tipo, el bandit lleva la cuenta de compras reales de cada variante y manda más clientes de
+#     ese tipo a la variante que más les vende. Así cada tipo de cliente acaba con "su" variante.
 #   - SHARE_CONTROL de las peticiones va al baseline, como referencia.
-#   - El resto se reparte entre las VARIANTS (definidas más abajo). Cada 2 minutos se leen las compras
-#     reales de cada variante en el feedback, y cada petición va a la variante que "gana" un sorteo
-#     ponderado por lo que ha vendido: las que venden más reciben más tráfico, pero ninguna deja de probarse.
-#   - FINAL_MODE = True (domingo): sin control y siempre la variante con mejor tasa de compra.
-# Ver resultados: python starter/ab_report.py 3
-SHARE_CONTROL = 0.10
+#   - FINAL_MODE = True (domingo): sin control y, para cada tipo de cliente, siempre su mejor variante.
+# Ver resultados: python starter/ab_report.py 3        ·   por tipo de cliente: python starter/ab_report.py 3 grupos
+SHARE_CONTROL = 0.05
 FINAL_MODE = False
 # Si se pone el nombre de una variante, TODOS los clientes la reciben (sin control ni bandit).
 # Sirve para ver su resultado real "a solas" en el leaderboard. None = funcionamiento normal (bandit).
-FORCE_VARIANT = "electropapis v1"
+FORCE_VARIANT = None
 STATS_HOURS = 12            # ventana de feedback que usa el bandit
 
 # Pesos de cada señal (a ajustar con eval_v1.py)
@@ -69,17 +70,33 @@ W = {
     "quality": 0.7,
     "pop": 1.0,           # best sellers de siempre (lo que hace fuerte al baseline)
 }
-W_FIXED = {**W, "pop": 0.0}   # la v1 que ya ganó en vivo (13:05)
+W_FIXED = {**W, "pop": 0.0}   # la v1 original (13:05); base de todas las variantes
+# electropapis v1: la mejor de la búsqueda offline (eval_v1.py --search) y la mejor en vivo (14/11)
+EP = {**W_FIXED, "buy_after_view": 3, "carousel": 2, "coview": 1, "self": 2, "subcat": 1.5,
+      "copurchase": 10, "quality": 0, "pop": 1}
 VARIANTS = {
-    "v1-cooc": W_FIXED,                                                        # la que ya gana
-    "v1-pop": {**W_FIXED, "pop": 1.0},                                         # + best sellers
-    "v1-cp2": {**W_FIXED, "copurchase": 2.4, "coview": 0.3},                   # + historial del usuario
-    "v1-self": {**W_FIXED, "self": 2.4},                                       # + lo que acaba de ver
-    "v1-pop-cp2": {**W_FIXED, "pop": 1.0, "copurchase": 2.4, "coview": 0.3},   # combinación
-    # mejor combinación de la búsqueda offline (eval_v1.py --search, 14/11 13:29): SNIPS_buy 0.064 vs 0.025 de v1
-    "electropapis v1": {**W_FIXED, "buy_after_view": 3, "carousel": 2, "coview": 1, "self": 2, "subcat": 1.5,
-                  "copurchase": 10, "quality": 0, "pop": 1},
+    "electropapis v1": EP,                                                    # la madre
+    # hijas: cada una refuerza lo que debería servir más a un tipo de cliente
+    "ep-historial": {**EP, "copurchase": 20, "self": 1},                      # habituales: su historial de compras
+    "ep-sesion": {**EP, "self": 4, "buy_after_view": 6, "carousel": 4,
+                  "copurchase": 4},                                           # en ficha: lo que está mirando ahora
+    "ep-novedad": {**EP, "subcat": 3, "live_cooc": 4, "trend": 2, "pop": 2},  # nuevos / productos nuevos: tendencia y parecidos
+    "ep-tendencia": {**EP, "trend": 3, "live_cooc": 3},                       # lo que se mueve hoy en la tienda
 }
+# Variantes especializadas por tipo de cliente, afinadas con el histórico por tune_segments.py.
+# "ep-seg-<tipo>" solo compite con los clientes de ese tipo. Se cargan al arrancar si existe el archivo.
+SEGMENT_FILE = Path(__file__).parent / "segment_weights.json"
+SEG_VARIANT_FOR = {"prod_nuevo": "nuevo"}   # en el histórico no hay productos nuevos: usan la de "nuevo"
+# Solo los tipos con cientos de compras en el histórico (ficha ~1.000, categoría ~440). "nuevo" (~12 compras) y
+# "sin_vistas" (~22) no dan para afinar con fiabilidad: ahí deciden las variantes generales y el bandit en vivo.
+TRUSTED_SEGMENTS = {"producto", "categoria"}
+if SEGMENT_FILE.exists():
+    try:
+        for _sg, _d in json.loads(SEGMENT_FILE.read_text())["segments"].items():
+            if _d.get("mejora") and _sg in TRUSTED_SEGMENTS:
+                VARIANTS[f"ep-seg-{_sg}"] = {**EP, **{k: float(x) for k, x in _d["W"].items()}}
+    except Exception as _e:
+        print(f"aviso: no se pudo leer {SEGMENT_FILE.name} ({_e})")
 DECAY = 0.6               # peso de la vista k-ésima más reciente: DECAY**k
 ALREADY_BOUGHT = 0.15     # multiplicador para productos que el usuario ya compró
 NEIGHBORS = 30
@@ -220,6 +237,11 @@ SELECT product_id::String AS product_id, countIf(event_type = 'purchase') AS buy
 FROM shop.events WHERE ts::DateTime64(3) > now() - INTERVAL 1 HOUR
 GROUP BY product_id"""
 
+SQL_POP_24H = """
+SELECT product_id::String AS product_id, countIf(event_type = 'purchase') AS buys
+FROM shop.events WHERE ts::DateTime64(3) > now() - INTERVAL 24 HOUR
+GROUP BY product_id"""
+
 SQL_LIVE_COOC = f"""
 SELECT a.product_id AS p, b.product_id AS q,
        count() + 3 * countIf(b.event_type = 'purchase') + countIf(b.event_type = 'add_to_cart') AS n
@@ -251,6 +273,8 @@ class Model:
         self.cat_of: dict[str, str] = {}
         self.price_of: dict[str, float] = {}
         self.new_products: set[str] = set()
+        self.pop_24h: dict[str, float] = {}
+        self.base_price: dict[str, float] = {}
         self.sales: dict[str, tuple[float, float]] = {}
         self.subcat_top: dict[str, list[tuple[str, float]]] = {}
         self.available: set[str] = set()
@@ -322,6 +346,9 @@ class Model:
             t[r["product_id"]] = float(r["buys"]) + 0.3 * float(r["carts"]) + 0.02 * float(r["views"])
         top = max(t.values(), default=1.0) or 1.0
         self.trend = {p: x / top for p, x in t.items()}
+        d = {r["product_id"]: float(r["buys"]) for r in query(SQL_POP_24H, 30)}
+        top = max(d.values(), default=1.0) or 1.0
+        self.pop_24h = {p: (x / top) ** 0.5 for p, x in d.items()}   # compras en la tienda en las últimas 24 h
 
     def refresh_live_cooc(self) -> None:
         self.live_cooc = neighbors(query(SQL_LIVE_COOC, 120))
@@ -383,50 +410,122 @@ class Model:
 
 
 # ---------------------------------------------------------------- autoajuste en vivo
+PARENT = "electropapis v1"
+SEGMENTS = ["nuevo", "prod_nuevo", "sin_vistas", "producto", "categoria"]
+SEGMENT_NAMES = {"nuevo": "cliente nuevo", "prod_nuevo": "ve un producto nuevo", "sin_vistas": "habitual sin vistas",
+                 "producto": "habitual en ficha", "categoria": "habitual en categoría"}
+
+
+def segment(req: dict, model: "Model") -> str:
+    """Tipo de cliente. Los dos primeros son las peticiones 'cold start', que puntúan aparte (10 puntos)."""
+    if req.get("is_new_user") in (True, 1, "true"):
+        return "nuevo"
+    views = [v.get("product_id") for v in (req.get("recent_views") or []) if isinstance(v, dict)]
+    if any(v in model.new_products for v in views):
+        return "prod_nuevo"
+    if not views:
+        return "sin_vistas"
+    return "categoria" if req.get("page") == "category" else "producto"
+
+
 class Bandit:
-    """Reparte el tráfico entre VARIANTS según sus compras reales (muestreo de Thompson)."""
+    """Bandit contextual: para cada tipo de cliente reparte el tráfico entre VARIANTS según sus compras
+    reales (muestreo de Thompson). Cada tipo empieza con lo aprendido con todos los clientes (prior
+    jerárquico) y se va especializando a medida que acumula sus propias compras.
+    El tipo de cada cliente se guarda en {TEAM}.scratch para poder contar compras por tipo."""
+
+    PRIOR_STRENGTH = 300   # cuántos "clientes" pesa lo aprendido en general frente a los datos del tipo
 
     def __init__(self) -> None:
-        self.stats = {v: (0, 0) for v in VARIANTS}   # variante → (peticiones, compras)
+        self.glob: dict[str, tuple[int, int]] = {}                 # variante → (clientes, compras)
+        self.seg: dict[tuple[str, str], tuple[int, int]] = {}      # (variante, tipo) → (clientes, compras)
         self.rng = random.Random()
 
+    @property
+    def stats(self) -> dict[str, tuple[int, int]]:
+        return {v: self.glob.get(v, (0, 0)) for v in VARIANTS}
+
     def refresh(self) -> None:
-        rows = query(f"""
-SELECT s.v AS v, count() AS n, countIf(f.purchased::String != '') AS buys
+        feedback = f"""
 FROM (SELECT request_id::String AS rid, purchased FROM {TEAM}.feedback
       WHERE served_by::String = 'team' AND ts::DateTime64(3) > now() - INTERVAL {STATS_HOURS} HOUR) AS f
 INNER JOIN (SELECT request_id::String AS rid, any(model_version::String) AS v
-            FROM {TEAM}.submissions GROUP BY rid) AS s ON f.rid = s.rid
+            FROM {TEAM}.submissions GROUP BY rid) AS s ON f.rid = s.rid"""
+        try:
+            rows = query(f"""
+SELECT s.v AS v, ifNull(c.sg, '') AS sg, count() AS n, countIf(f.purchased::String != '') AS buys{feedback}
+LEFT JOIN (SELECT request_id::String AS rid, any(segment::String) AS sg
+           FROM {TEAM}.scratch WHERE kind::String = 'segment' GROUP BY rid) AS c ON f.rid = c.rid
+GROUP BY v, sg""", 30)
+        except Exception:   # scratch todavía vacía (primeros segundos): solo la cuenta general
+            rows = query(f"""
+SELECT s.v AS v, '' AS sg, count() AS n, countIf(f.purchased::String != '') AS buys{feedback}
 GROUP BY v""", 30)
-        got = {r["v"]: (int(r["n"]), int(r["buys"])) for r in rows}
-        self.stats = {v: got.get(v, (0, 0)) for v in VARIANTS}
-        ctrl = got.get("control", (0, 0))
+        glob: dict[str, list[int]] = {}
+        seg: dict[tuple[str, str], list[int]] = {}
+        for r in rows:
+            n, b = int(r["n"]), int(r["buys"])
+            g = glob.setdefault(r["v"], [0, 0]); g[0] += n; g[1] += b
+            if r["sg"]:
+                x = seg.setdefault((r["v"], r["sg"]), [0, 0]); x[0] += n; x[1] += b
+        self.glob = {k: (v[0], v[1]) for k, v in glob.items()}
+        self.seg = {k: (v[0], v[1]) for k, v in seg.items()}
+        self.report()
+
+    def _posterior(self, v: str, sg: str | None) -> tuple[float, float]:
+        # punto de partida: la tasa de la variante madre (las hijas heredan su reputación, con peso de 100 clientes)
+        PN, PB = self.glob.get(PARENT, (0, 0))
+        parent = (PB + 1) / (PN + 100)
+        N, B = self.glob.get(v, (0, 0))
+        a, b = parent * 100 + B, (1 - parent) * 100 + N - B   # tasa con todos los clientes
+        mean = a / (a + b)
+        if sg is None:
+            return a, b
+        n, b = self.seg.get((v, sg), (0, 0))
+        return mean * self.PRIOR_STRENGTH + b, (1 - mean) * self.PRIOR_STRENGTH + n - b
+
+    @staticmethod
+    def candidates(sg: str | None) -> list[str]:
+        """Variantes que compiten en ese tipo: las generales + la especializada de ese tipo (si existe)."""
+        own = f"ep-seg-{SEG_VARIANT_FOR.get(sg, sg)}"
+        return [v for v in VARIANTS if not v.startswith("ep-seg-") or v == own]
+
+    def best(self, sg: str | None = None) -> str:
+        def m(v):
+            a, b = self._posterior(v, sg)
+            return a / (a + b)
+        return max(self.candidates(sg), key=m)
+
+    def choose(self, sg: str | None = None) -> str:
+        if FORCE_VARIANT:
+            return FORCE_VARIANT
+        if FINAL_MODE:
+            return self.best(sg)
+        return max(self.candidates(sg), key=lambda v: self.rng.betavariate(*self._posterior(v, sg)))
+
+    def report(self) -> None:
+        ctrl = self.glob.get("control", (0, 0))
         base = ctrl[1] / ctrl[0] if ctrl[0] else None
-        total = sum(n for n, _ in self.stats.values()) or 1
+        stats = self.stats
+        total = sum(n for n, _ in stats.values()) or 1
         print(f"\n[{time.strftime('%H:%M')}] Rendimiento en vivo (últimas {STATS_HOURS} h, compras reales):")
         print(f"  {'versión':<16}{'clientes':>9}{'compras':>9}{'% compra':>10}{'vs baseline':>13}{'% tráfico':>11}")
         if ctrl[0]:
             print(f"  {'control':<16}{ctrl[0]:>9}{ctrl[1]:>9}{base:>10.2%}{'—':>13}{'':>11}")
-        for v, (n, b) in sorted(self.stats.items(), key=lambda x: -(x[1][1] / x[1][0] if x[1][0] else 0)):
+        for v, (n, b) in sorted(stats.items(), key=lambda x: -(x[1][1] / x[1][0] if x[1][0] else 0)):
             rate = b / n if n else 0.0
             lift = f"{(rate / base - 1):+.0%}" if base and n else "—"
             star = "  ← IA" if v == "v2-gbm" else ""
             print(f"  {v:<16}{n:>9}{b:>9}{rate:>10.2%}{lift:>13}{n / total:>11.0%}{star}")
-        print(f"  → mejor ahora: {self.best()} (pocas compras = mucha suerte: fiable a partir de ~50 compras por versión)\n")
-
-    def best(self) -> str:
-        return max(VARIANTS, key=lambda v: (self.stats.get(v, (0, 0))[1] + 1) / (self.stats.get(v, (0, 0))[0] + 100))
-
-    def choose(self) -> str:
-        if FORCE_VARIANT:
-            return FORCE_VARIANT
-        if FINAL_MODE:
-            return self.best()
-        # prior Beta(1, 99) ≈ tasa del 1 %: sin datos, todas empiezan igual
-        def draw(v):
-            n, b = self.stats.get(v, (0, 0))
-            return self.rng.betavariate(1 + b, 99 + n - b)
-        return max(VARIANTS, key=draw)
+        print("  Por tipo de cliente (variante elegida · sus compras/clientes en ese tipo · total del tipo):")
+        for sg in SEGMENTS:
+            n_sg = sum(n for (v, s_), (n, _) in self.seg.items() if s_ == sg and v in VARIANTS)
+            b_sg = sum(b for (v, s_), (_, b) in self.seg.items() if s_ == sg and v in VARIANTS)
+            bv = self.best(sg)
+            nb, bb = self.seg.get((bv, sg), (0, 0))
+            print(f"    {SEGMENT_NAMES[sg]:<22} → {bv:<16} {bb:>4}/{nb:<6}   tipo: {n_sg:>6} clientes, "
+                  f"{(b_sg / n_sg if n_sg else 0):.2%} compra")
+        print("  (pocas compras = mucha suerte: fiable a partir de ~50 compras por variante y tipo)\n")
 
 
 BANDIT = Bandit()
@@ -434,11 +533,22 @@ BANDIT = Bandit()
 
 # ---------------------------------------------------------------- bucle en vivo
 NEW_REQUESTS = """
-SELECT request_id::String AS request_id, user_id::String AS user_id,
+SELECT request_id::String AS request_id, user_id::String AS user_id, is_new_user,
        context.page::String AS page, context.device::String AS device, recent_views
 FROM shop.requests
 ORDER BY ts DESC
 LIMIT 60"""
+
+
+_scratch_http = requests.Session()
+_scratch_http.headers.update(http.headers)
+
+
+def save_segments(segs: list[Record]) -> None:
+    try:
+        _scratch_http.post(f"{API}/v1/tables/scratch", params={"database": TEAM}, json=segs, timeout=10)
+    except Exception as e:
+        print(f"aviso: no se pudo guardar el tipo de cliente ({e})")
 
 
 def refresher(model: Model, stop: threading.Event) -> None:
@@ -492,13 +602,17 @@ def main() -> None:
     while True:
         try:
             fresh = [r for r in query(NEW_REQUESTS) if r["request_id"] not in seen]
-            answers = []
+            answers, segs = [], []
             for req in fresh:
                 seen.add(req["request_id"])
+                try:
+                    sg = segment(req, model)
+                except Exception:
+                    sg = "producto"
                 if not FINAL_MODE and not FORCE_VARIANT and zlib.crc32(req["request_id"].encode()) % 1000 < SHARE_CONTROL * 1000:
                     arm = "control"
                 else:
-                    arm = BANDIT.choose()
+                    arm = BANDIT.choose(sg)
                 try:
                     if arm == "control":
                         items = model.baseline()
@@ -513,10 +627,13 @@ def main() -> None:
                     traceback.print_exc()
                     items = model.popular[:10]
                 answers.append({"request_id": req["request_id"], "items": items, "model_version": arm})
+                segs.append({"kind": "segment", "request_id": req["request_id"], "segment": sg})
             if answers:
                 http.post(f"{API}/v1/tables/submissions", params={"database": TEAM},
                           json=answers, timeout=10).raise_for_status()
                 n_total += len(answers)
+                # tipo de cada cliente → scratch, en segundo plano (no retrasa las respuestas)
+                threading.Thread(target=save_segments, args=(segs,), daemon=True).start()
             if time.time() - t_report > 30:
                 print(f"{time.strftime('%H:%M:%S')} respondidas {n_total} peticiones")
                 t_report = time.time()
