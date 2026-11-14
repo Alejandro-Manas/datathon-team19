@@ -1,0 +1,629 @@
+
+===== shop.requests (2 últimas)
+[
+ {
+  "context.device": "web",
+  "context.page": "product",
+  "context.region": "Castilla y León",
+  "is_new_user": false,
+  "recent_views": [
+   {
+    "product_id": "p_49f9c6",
+    "ts": "2026-11-14 11:36:42.326000000"
+   }
+  ],
+  "request_id": "r_eab9573af6f385de",
+  "ts": "2026-11-14 11:37:53.700000000",
+  "user_id": "u_f41bc6bd"
+ },
+ {
+  "context.device": "web",
+  "context.page": "product",
+  "context.region": "Galicia",
+  "is_new_user": false,
+  "recent_views": [
+   {
+    "product_id": "p_19bc88",
+    "ts": "2026-11-14 11:37:03.856000000"
+   },
+   {
+    "product_id": "p_c75c27",
+    "ts": "2026-11-14 11:37:07.941000000"
+   },
+   {
+    "product_id": "p_c9aa36",
+    "ts": "2026-11-14 11:37:52.700000000"
+   }
+  ],
+  "request_id": "r_9b141936692601c0",
+  "ts": "2026-11-14 11:37:53.343000000",
+  "user_id": "u_e6a34721"
+ }
+]
+
+===== shop.catalog (2)
+[
+ {
+  "brand": "Vedo",
+  "category": "Sports & Outdoors",
+  "created_at": "2026-01-21 07:00:00.000000000",
+  "description": "Vedo Yoga Mats with organic ingredients and extra durability.",
+  "is_active": true,
+  "price_eur": 14.99,
+  "product_id": "p_001897",
+  "subcategory": "Yoga Mats"
+ },
+ {
+  "brand": "Zore",
+  "category": "Fashion",
+  "created_at": "2025-11-06 07:00:00.000000000",
+  "description": "From Zore (Jackets): wireless connectivity, a travel-ready build.",
+  "is_active": true,
+  "price_eur": 4.99,
+  "product_id": "p_00196b",
+  "subcategory": "Jackets"
+ }
+]
+
+===== shop.history_sessions (2)
+[
+ {
+  "clicked": null,
+  "context.device": "web",
+  "context.page": "product",
+  "context.region": "Catalunya",
+  "propensity": [
+   0.218886,
+   0.002833,
+   0.11516,
+   0.321647,
+   0.02928,
+   0.01429,
+   0.027197,
+   0.034907,
+   0.017993,
+   7.4e-05
+  ],
+  "purchased": null,
+  "recent_views": [
+   {
+    "product_id": "p_159190",
+    "ts": "2026-09-15 06:56:55.421000000"
+   },
+   {
+    "product_id": "p_159190",
+    "ts": "2026-09-15 06:57:20.736000000"
+   },
+   {
+    "product_id": "p_41511c",
+    "ts": "2026-09-15 06:59:13.215000000"
+   }
+  ],
+  "request_id": "r_50309edc92778291",
+  "revenue_eur": 0,
+  "shown": [
+   "p_8ca8ed",
+   "p_8ac75a",
+   "p_e2c959",
+   "p_2c88d5",
+   "p_8fbfd1",
+   "p_7a1c91",
+   "p_95d5df",
+   "p_b8227f",
+   "p_4077a5",
+   "p_b45993"
+  ],
+  "ts": "2026-09-15 07:00:01.456000000",
+  "user_id": "u_20cbc5d5"
+ },
+ {
+  "clicked": null,
+  "context.device": "web",
+  "context.page": "product",
+  "context.region": "Madrid",
+  "propensity": [
+   0.032807,
+   0.011809,
+   0.008224,
+   0.025852,
+   0.290919,
+   0.055511,
+   0.000396,
+   0.021666,
+   0.016371,
+   0.013362
+  ],
+  "purchased": null,
+  "recent_views": [
+   {
+    "product_id": "p_f3c09e",
+    "ts": "2026-09-15 07:00:11.815000000"
+   }
+  ],
+  "request_id": "r_7a441a0fb217005e",
+  "revenue_eur": 0,
+  "shown": [
+   "p_032d24",
+   "p_40bbb4",
+   "p_66f831",
+   "p_d245de",
+   "p_adc3e6",
+   "p_07b81b",
+   "p_675bb7",
+   "p_f4e307",
+   "p_e5ac6e",
+   "p_68498e"
+  ],
+  "ts": "2026-09-15 07:00:13.975000000",
+  "user_id": "u_cd609f53"
+ }
+]
+
+===== shop.history_events (3)
+[
+ {
+  "device": "android",
+  "event_type": "view",
+  "price_eur": 9.99,
+  "product_id": "p_d06b48",
+  "region": "Catalunya",
+  "session_id": "s_9aee4d52a08a",
+  "ts": "2026-09-15 07:00:06.371000000",
+  "user_id": "u_04b42c08"
+ },
+ {
+  "device": "web",
+  "event_type": "view",
+  "price_eur": 85.99,
+  "product_id": "p_9dc613",
+  "region": "Comunitat Valenciana",
+  "session_id": "s_8e7292024915",
+  "ts": "2026-09-15 07:00:13.592000000",
+  "user_id": "u_9f64d903"
+ },
+ {
+  "device": "android",
+  "event_type": "view",
+  "price_eur": 215.99,
+  "product_id": "p_134914",
+  "region": "Catalunya",
+  "session_id": "s_9aee4d52a08a",
+  "ts": "2026-09-15 07:00:23.341000000",
+  "user_id": "u_04b42c08"
+ }
+]
+
+===== shop.events (3 últimos)
+[
+ {
+  "device": "web",
+  "event_type": "view",
+  "price_eur": 15.99,
+  "product_id": "p_2c0769",
+  "region": "Canarias",
+  "session_id": "s_4b13eab7bb96",
+  "ts": "2026-11-14 11:37:53.987000000",
+  "user_id": "u_7087238b"
+ },
+ {
+  "device": "web",
+  "event_type": "view",
+  "price_eur": 8.99,
+  "product_id": "p_c3560f",
+  "region": "Canarias",
+  "session_id": "s_4b13eab7bb96",
+  "ts": "2026-11-14 11:37:53.980000000",
+  "user_id": "u_7087238b"
+ },
+ {
+  "device": "web",
+  "event_type": "view",
+  "price_eur": 5.99,
+  "product_id": "p_177ea1",
+  "region": "Canarias",
+  "session_id": "s_4b13eab7bb96",
+  "ts": "2026-11-14 11:37:53.973000000",
+  "user_id": "u_7087238b"
+ }
+]
+
+===== shop.catalog_updates (3 últimos)
+[
+ {
+  "brand": "Kakari",
+  "category": "Computers & Gaming",
+  "change": "back_in_stock",
+  "created_at": "2025-06-10 07:00:00.000000000",
+  "description": "Kakari Mice with great value for money and built for professionals.",
+  "is_active": true,
+  "price_eur": 11.99,
+  "product_id": "p_3c342d",
+  "subcategory": "Mice",
+  "ts": "2026-11-14 11:35:00.000000000"
+ },
+ {
+  "brand": "Maka",
+  "category": "Sports & Outdoors",
+  "change": "back_in_stock",
+  "created_at": "2025-03-24 07:00:00.000000000",
+  "description": "From Maka (Water Bottles): a travel-ready build, a vintage look.",
+  "is_active": true,
+  "price_eur": 308.99,
+  "product_id": "p_0d3044",
+  "subcategory": "Water Bottles",
+  "ts": "2026-11-14 11:35:00.000000000"
+ },
+ {
+  "brand": "Riti",
+  "category": "Fashion",
+  "change": "back_in_stock",
+  "created_at": "2025-09-07 07:00:00.000000000",
+  "description": "Riti Socks line, known for organic ingredients and a minimalist design.",
+  "is_active": true,
+  "price_eur": 11.99,
+  "product_id": "p_578bd2",
+  "subcategory": "Socks",
+  "ts": "2026-11-14 11:35:00.000000000"
+ }
+]
+
+===== team_19.feedback (3 últimos)
+[
+ {
+  "clicked": "",
+  "fallback_reason": "",
+  "latency_ms": 1678,
+  "purchased": "",
+  "request_id": "r_88a83782f72fe3f9",
+  "revenue_eur": 0,
+  "served_by": "team",
+  "shown": [
+   "p_69d40e",
+   "p_0210c5",
+   "p_09a938",
+   "p_1036d3",
+   "p_e2454f",
+   "p_2c88d5",
+   "p_8ca8ed",
+   "p_050730",
+   "p_5733ef",
+   "p_d2db6a"
+  ],
+  "ts": "2026-11-14 11:37:55.942000000"
+ },
+ {
+  "clicked": "p_e2454f",
+  "fallback_reason": "",
+  "latency_ms": 2034,
+  "purchased": "",
+  "request_id": "r_4e272b650d619853",
+  "revenue_eur": 0,
+  "served_by": "team",
+  "shown": [
+   "p_69d40e",
+   "p_0210c5",
+   "p_09a938",
+   "p_1036d3",
+   "p_e2454f",
+   "p_2c88d5",
+   "p_8ca8ed",
+   "p_050730",
+   "p_5733ef",
+   "p_d2db6a"
+  ],
+  "ts": "2026-11-14 11:37:55.587000000"
+ },
+ {
+  "clicked": "",
+  "fallback_reason": "",
+  "latency_ms": 856,
+  "purchased": "",
+  "request_id": "r_3b4ee547863f2de2",
+  "revenue_eur": 0,
+  "served_by": "team",
+  "shown": [
+   "p_69d40e",
+   "p_0210c5",
+   "p_09a938",
+   "p_1036d3",
+   "p_e2454f",
+   "p_2c88d5",
+   "p_8ca8ed",
+   "p_050730",
+   "p_5733ef",
+   "p_d2db6a"
+  ],
+  "ts": "2026-11-14 11:37:55.231000000"
+ }
+]
+
+===== conteos
+[
+ {
+  "catalog": 5000,
+  "sessions": 2000000,
+  "hist_events": 11996560,
+  "requests": 28432,
+  "live_events": 631047,
+  "updates": 876
+ }
+]
+
+===== productos por categoría
+[
+ {
+  "category": "Home & Garden",
+  "n": 640,
+  "avg_price": 44.5
+ },
+ {
+  "category": "Pets",
+  "n": 613,
+  "avg_price": 39.6
+ },
+ {
+  "category": "Electronics",
+  "n": 580,
+  "avg_price": 42.3
+ },
+ {
+  "category": "Books & Media",
+  "n": 553,
+  "avg_price": 57.7
+ },
+ {
+  "category": "Toys & Baby",
+  "n": 516,
+  "avg_price": 46.8
+ },
+ {
+  "category": "Sports & Outdoors",
+  "n": 489,
+  "avg_price": 35.2
+ },
+ {
+  "category": "Home & Kitchen",
+  "n": 466,
+  "avg_price": 62.3
+ },
+ {
+  "category": "Computers & Gaming",
+  "n": 427,
+  "avg_price": 40.5
+ },
+ {
+  "category": "Fashion",
+  "n": 394,
+  "avg_price": 62.4
+ },
+ {
+  "category": "Beauty & Health",
+  "n": 322,
+  "avg_price": 45
+ }
+]
+
+===== tipos de evento histórico
+[
+ {
+  "t": "add_to_cart",
+  "n": 1094353
+ },
+ {
+  "t": "view",
+  "n": 10354047
+ },
+ {
+  "t": "purchase",
+  "n": 548160
+ }
+]
+
+===== tasas del carrusel antiguo
+[
+ {
+  "n": 2000000,
+  "ctr": 0.0375,
+  "cvr": 0.014,
+  "rev_per_req": 0.491
+ }
+]
+
+===== contexto de las peticiones en vivo
+[
+ {
+  "page": "home",
+  "new_user": false,
+  "n_views": 0,
+  "n": 3927
+ },
+ {
+  "page": "product",
+  "new_user": false,
+  "n_views": 1,
+  "n": 3521
+ },
+ {
+  "page": "product",
+  "new_user": false,
+  "n_views": 2,
+  "n": 2834
+ },
+ {
+  "page": "product",
+  "new_user": false,
+  "n_views": 3,
+  "n": 2149
+ },
+ {
+  "page": "home",
+  "new_user": true,
+  "n_views": 0,
+  "n": 1673
+ },
+ {
+  "page": "category",
+  "new_user": false,
+  "n_views": 1,
+  "n": 1543
+ },
+ {
+  "page": "product",
+  "new_user": true,
+  "n_views": 1,
+  "n": 1541
+ },
+ {
+  "page": "product",
+  "new_user": false,
+  "n_views": 4,
+  "n": 1338
+ },
+ {
+  "page": "product",
+  "new_user": true,
+  "n_views": 2,
+  "n": 1211
+ },
+ {
+  "page": "category",
+  "new_user": false,
+  "n_views": 2,
+  "n": 1190
+ },
+ {
+  "page": "product",
+  "new_user": true,
+  "n_views": 3,
+  "n": 916
+ },
+ {
+  "page": "category",
+  "new_user": false,
+  "n_views": 3,
+  "n": 863
+ },
+ {
+  "page": "product",
+  "new_user": false,
+  "n_views": 5,
+  "n": 839
+ },
+ {
+  "page": "category",
+  "new_user": true,
+  "n_views": 1,
+  "n": 635
+ },
+ {
+  "page": "category",
+  "new_user": false,
+  "n_views": 4,
+  "n": 601
+ },
+ {
+  "page": "product",
+  "new_user": true,
+  "n_views": 4,
+  "n": 581
+ },
+ {
+  "page": "product",
+  "new_user": false,
+  "n_views": 6,
+  "n": 549
+ },
+ {
+  "page": "category",
+  "new_user": true,
+  "n_views": 2,
+  "n": 482
+ },
+ {
+  "page": "product",
+  "new_user": true,
+  "n_views": 5,
+  "n": 379
+ },
+ {
+  "page": "category",
+  "new_user": true,
+  "n_views": 3,
+  "n": 363
+ },
+ {
+  "page": "category",
+  "new_user": false,
+  "n_views": 5,
+  "n": 349
+ },
+ {
+  "page": "category",
+  "new_user": true,
+  "n_views": 4,
+  "n": 252
+ },
+ {
+  "page": "category",
+  "new_user": false,
+  "n_views": 6,
+  "n": 232
+ },
+ {
+  "page": "product",
+  "new_user": true,
+  "n_views": 6,
+  "n": 219
+ },
+ {
+  "page": "category",
+  "new_user": true,
+  "n_views": 5,
+  "n": 147
+ }
+]
+
+===== cambios de catálogo por tipo
+[
+ {
+  "c": "out_of_stock",
+  "n": 96
+ },
+ {
+  "c": "back_in_stock",
+  "n": 60
+ },
+ {
+  "c": "new_product",
+  "n": 100
+ },
+ {
+  "c": "price_change",
+  "n": 620
+ }
+]
+
+===== nuestro feedback
+[
+ {
+  "s": "team",
+  "r": "",
+  "n": 6245,
+  "cvr": 0.0059,
+  "lat": 1330
+ },
+ {
+  "s": "fallback",
+  "r": "invalid",
+  "n": 3,
+  "cvr": 0,
+  "lat": 3270
+ },
+ {
+  "s": "fallback",
+  "r": "missing",
+  "n": 2864,
+  "cvr": 0.0091,
+  "lat": 0
+ }
+]

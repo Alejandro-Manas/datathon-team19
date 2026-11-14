@@ -18,7 +18,9 @@ stock, tendencias y co-visitas en vivo sin bloquear el bucle de respuesta.
 """
 from __future__ import annotations
 
+import json
 import os
+import random
 import threading
 import time
 import traceback
@@ -37,13 +39,19 @@ TEAM = os.environ.get("TEAM_ID", "team_19")
 http = requests.Session()
 http.headers["Authorization"] = f"Bearer {os.environ['RAWTREE_API_KEY']}"
 
-MODEL_VERSION = "v1-cooc"
+MODEL_VERSION = "v1"   # prefijo; cada variante del bandit tiene su propio nombre
 Record = dict[str, Any]
 
-# Test A/B en vivo: este % de peticiones recibe la v1; el resto, el baseline (grupo de control).
-# Se reparte por hash del request_id, así que es aleatorio y reproducible.
-# Comparar con: python starter/ab_report.py   ·   Para la ronda final (domingo): poner 1.0
-SHARE_V1 = 0.5
+# Autoajuste en vivo (bandit con muestreo de Thompson):
+#   - SHARE_CONTROL de las peticiones va al baseline, como referencia.
+#   - El resto se reparte entre las VARIANTS (definidas más abajo). Cada 2 minutos se leen las compras
+#     reales de cada variante en el feedback, y cada petición va a la variante que "gana" un sorteo
+#     ponderado por lo que ha vendido: las que venden más reciben más tráfico, pero ninguna deja de probarse.
+#   - FINAL_MODE = True (domingo): sin control y siempre la variante con mejor tasa de compra.
+# Ver resultados: python starter/ab_report.py 3
+SHARE_CONTROL = 0.10
+FINAL_MODE = False
+STATS_HOURS = 12            # ventana de feedback que usa el bandit
 
 # Pesos de cada señal (a ajustar con eval_v1.py)
 W = {
@@ -56,6 +64,18 @@ W = {
     "copurchase": 1.2,
     "trend": 0.5,
     "quality": 0.7,
+    "pop": 1.0,           # best sellers de siempre (lo que hace fuerte al baseline)
+}
+W_FIXED = {**W, "pop": 0.0}   # la v1 que ya ganó en vivo (13:05)
+VARIANTS = {
+    "v1-cooc": W_FIXED,                                                        # la que ya gana
+    "v1-pop": {**W_FIXED, "pop": 1.0},                                         # + best sellers
+    "v1-cp2": {**W_FIXED, "copurchase": 2.4, "coview": 0.3},                   # + historial del usuario
+    "v1-self": {**W_FIXED, "self": 2.4},                                       # + lo que acaba de ver
+    "v1-pop-cp2": {**W_FIXED, "pop": 1.0, "copurchase": 2.4, "coview": 0.3},   # combinación
+    # mejor combinación de la búsqueda offline (eval_v1.py --search, 14/11 13:29): SNIPS_buy 0.064 vs 0.025 de v1
+    "v1-search": {**W_FIXED, "buy_after_view": 3, "carousel": 2, "coview": 1, "self": 2, "subcat": 1.5,
+                  "copurchase": 10, "quality": 0, "pop": 1},
 }
 DECAY = 0.6               # peso de la vista k-ésima más reciente: DECAY**k
 ALREADY_BOUGHT = 0.15     # multiplicador para productos que el usuario ya compró
@@ -64,7 +84,8 @@ NEIGHBORS = 30
 
 def query(sql: str, timeout: float = 10) -> list[Record]:
     r = http.post(f"{API}/v1/query", json={"sql": sql}, timeout=timeout)
-    r.raise_for_status()
+    if r.status_code >= 400:   # mostrar el motivo que da RawTree, no solo "400 Bad Request"
+        raise RuntimeError(f"{r.status_code}: {r.text[:500]}")
     return r.json()["data"]
 
 
@@ -144,11 +165,11 @@ def sql_quality(until):
     """Tasa de compra de cada producto cuando el carrusel antiguo lo mostró (suavizada)."""
     c = _cut(until)
     return f"""
-SELECT s::String AS product_id, count() AS shown,
-       countIf(ifNull(purchased::String, '') = s::String) AS bought
-FROM shop.history_sessions ARRAY JOIN shown AS s
-WHERE 1{c}
-GROUP BY product_id"""
+SELECT s AS product_id, count() AS n_shown, countIf(pur = s) AS bought
+FROM (SELECT CAST(shown, 'Array(String)') AS sh, ifNull(purchased::String, '') AS pur
+      FROM shop.history_sessions WHERE 1{c})
+ARRAY JOIN sh AS s
+GROUP BY s"""
 
 
 def sql_sales(until):
@@ -227,6 +248,8 @@ class Model:
         self.subcat_top: dict[str, list[tuple[str, float]]] = {}
         self.available: set[str] = set()
         self.popular: list[str] = []      # orden de relleno, siempre válido
+        self.pop: dict[str, float] = {}
+        self.best_sellers: list[str] = []
 
     # ---- construcción a partir del histórico (una vez al arrancar; `until` para evaluación offline)
     def build_history(self, until: str | None = None) -> None:
@@ -239,7 +262,7 @@ class Model:
         q = {}
         for r in safe_query("calidad carrusel", sql_quality(until)):
             # media bayesiana: tasa global ~1.4 %, con peso de 200 impresiones
-            q[r["product_id"]] = (float(r["bought"]) + 200 * 0.014) / (float(r["shown"]) + 200)
+            q[r["product_id"]] = (float(r["bought"]) + 200 * 0.014) / (float(r["n_shown"]) + 200)
         sales = {r["product_id"]: (float(r["buys"]), float(r["views"]))
                  for r in safe_query("ventas", sql_sales(until))}
         for p, (b, v) in sales.items():   # productos que el carrusel nunca mostró: usamos compra/vista orgánica
@@ -251,6 +274,8 @@ class Model:
         self.user_bought = {r["u"]: set(r["ps"]) for r in safe_query("compras por usuario", sql_user_purchases(until))}
         # best sellers de siempre (= baseline / fallback oficial), para el grupo de control del A/B
         self.best_sellers = [p for _, p in sorted(((b, p) for p, (b, _) in sales.items() if b > 0), reverse=True)]
+        top_b = max((b for b, _ in sales.values()), default=1.0) or 1.0
+        self.pop = {p: (b / top_b) ** 0.5 for p, (b, _) in sales.items() if b > 0}
 
     def baseline(self) -> list[str]:
         return [p for p in self.best_sellers if p in self.available][:10]
@@ -273,7 +298,7 @@ class Model:
         self.available = available
 
     def _prior(self, p: str) -> float:
-        return self.quality.get(p, 0.0) + 0.5 * self.trend.get(p, 0.0)
+        return self.pop.get(p, 0.0) + 0.3 * self.quality.get(p, 0.0) + 0.5 * self.trend.get(p, 0.0)
 
     def _rank_norm(self, ps: list[str], k: int = 15) -> list[tuple[str, float]]:
         ps = sorted(ps, key=lambda p: -self._prior(p))[:k]
@@ -294,7 +319,9 @@ class Model:
         self.live_bought = {r["u"]: set(r["ps"]) for r in query(SQL_LIVE_PURCHASES, 60)}
 
     # ---- recomendación
-    def recommend(self, recent_views: list[Record] | None, user_id: str = "", page: str = "") -> list[str]:
+    def recommend(self, recent_views: list[Record] | None, user_id: str = "", page: str = "",
+                  w: dict | None = None) -> list[str]:
+        W = w if w is not None else globals()["W"]
         avail = self.available
         score: dict[str, float] = defaultdict(float)
         views = [v["product_id"] for v in (recent_views or []) if isinstance(v, dict) and v.get("product_id")]
@@ -325,6 +352,8 @@ class Model:
         # 6-7: tendencia y calidad (también para quien no tiene historial)
         for p in self.popular[:300]:
             score[p] += W["quality"] * self.quality.get(p, 0.0) + W["trend"] * self.trend.get(p, 0.0)
+        for p in self.best_sellers[:300]:
+            score[p] += W["pop"] * self.pop.get(p, 0.0)
 
         for p in bought:
             if p in score:
@@ -338,6 +367,42 @@ class Model:
         return out
 
 
+# ---------------------------------------------------------------- autoajuste en vivo
+class Bandit:
+    """Reparte el tráfico entre VARIANTS según sus compras reales (muestreo de Thompson)."""
+
+    def __init__(self) -> None:
+        self.stats = {v: (0, 0) for v in VARIANTS}   # variante → (peticiones, compras)
+        self.rng = random.Random()
+
+    def refresh(self) -> None:
+        rows = query(f"""
+SELECT s.v AS v, count() AS n, countIf(f.purchased::String != '') AS buys
+FROM (SELECT request_id::String AS rid, purchased FROM {TEAM}.feedback
+      WHERE served_by::String = 'team' AND ts::DateTime64(3) > now() - INTERVAL {STATS_HOURS} HOUR) AS f
+INNER JOIN (SELECT request_id::String AS rid, any(model_version::String) AS v
+            FROM {TEAM}.submissions GROUP BY rid) AS s ON f.rid = s.rid
+GROUP BY v""", 30)
+        got = {r["v"]: (int(r["n"]), int(r["buys"])) for r in rows}
+        self.stats = {v: got.get(v, (0, 0)) for v in VARIANTS}
+        ctrl = got.get("control", (0, 0))
+        line = "  ".join(f"{v}: {b}/{n}={b / n:.2%}" if n else f"{v}: -" for v, (n, b) in self.stats.items())
+        print(f"[bandit] control: {ctrl[1]}/{ctrl[0]}  {line}  → mejor ahora: {self.best()}")
+
+    def best(self) -> str:
+        return max(VARIANTS, key=lambda v: (self.stats[v][1] + 1) / (self.stats[v][0] + 100))
+
+    def choose(self) -> str:
+        if FINAL_MODE:
+            return self.best()
+        # prior Beta(1, 99) ≈ tasa del 1 %: sin datos, todas empiezan igual
+        return max(VARIANTS, key=lambda v: self.rng.betavariate(1 + self.stats[v][1],
+                                                                  99 + self.stats[v][0] - self.stats[v][1]))
+
+
+BANDIT = Bandit()
+
+
 # ---------------------------------------------------------------- bucle en vivo
 NEW_REQUESTS = """
 SELECT request_id::String AS request_id, user_id::String AS user_id,
@@ -349,8 +414,8 @@ LIMIT 60"""
 
 def refresher(model: Model, stop: threading.Event) -> None:
     last = defaultdict(float)
-    every = {"catalog": 3, "trend": 60, "purchases": 60, "live_cooc": 300}
-    jobs = {"catalog": model.refresh_catalog, "trend": model.refresh_trend,
+    every = {"catalog": 3, "trend": 60, "purchases": 60, "live_cooc": 300, "bandit": 120}
+    jobs = {"bandit": BANDIT.refresh, "catalog": model.refresh_catalog, "trend": model.refresh_trend,
             "purchases": model.refresh_live_purchases, "live_cooc": model.refresh_live_cooc}
     while not stop.is_set():
         for name, fn in jobs.items():
@@ -373,6 +438,10 @@ def main() -> None:
         except Exception as e:
             print(f"aviso: {fn.__name__} falló al arrancar: {e}")
     model.refresh_catalog()  # recalcula el orden con la tendencia ya cargada
+    try:
+        BANDIT.refresh()
+    except Exception as e:
+        print(f"aviso: bandit sin datos todavía ({e})")
     print(f"Listo: {len(model.available)} productos disponibles. Respondiendo...")
 
     stop = threading.Event()
@@ -386,12 +455,16 @@ def main() -> None:
             answers = []
             for req in fresh:
                 seen.add(req["request_id"])
-                arm = MODEL_VERSION if zlib.crc32(req["request_id"].encode()) % 1000 < SHARE_V1 * 1000 else "control"
+                if not FINAL_MODE and zlib.crc32(req["request_id"].encode()) % 1000 < SHARE_CONTROL * 1000:
+                    arm = "control"
+                else:
+                    arm = BANDIT.choose()
                 try:
                     if arm == "control":
                         items = model.baseline()
                     else:
-                        items = model.recommend(req.get("recent_views"), req.get("user_id", ""), req.get("page", ""))
+                        items = model.recommend(req.get("recent_views"), req.get("user_id", ""), req.get("page", ""),
+                                                VARIANTS[arm])
                     if len(set(items)) != 10:
                         raise ValueError(f"lista inválida: {items}")
                 except Exception:

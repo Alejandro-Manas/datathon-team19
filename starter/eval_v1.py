@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import recommender_v1 as v1  # noqa: E402
 from recommender import best_sellers  # noqa: E402
 
-N_TEST = 20000
+N_TEST = int(next((a.split("=")[1] for a in sys.argv if a.startswith("--n=")), 50000))
 
 
 def load_test(cut: str) -> list[dict]:
@@ -86,6 +86,42 @@ def main() -> None:
         "baseline": evaluate(lambda r: best[:10], test),
         "v1": evaluate(lambda r: model.recommend(r["recent_views"], r["user_id"], r["page"]), test),
     }
+    if "--sweep" in sys.argv:   # combinaciones de pesos: ¿más peso a lo popular/calidad?
+        base = dict(v1.W)
+        configs = {
+            "calidad x3": {"quality": 2.1},
+            "calidad x6": {"quality": 4.2},
+            "calidad x12": {"quality": 8.4},
+            "calidad x6 sin coview": {"quality": 4.2, "coview": 0.0},
+            "calidad x6 sin coview/subcat": {"quality": 4.2, "coview": 0.0, "subcat": 0.0},
+            "calidad x6 copurch x2": {"quality": 4.2, "coview": 0.0, "copurchase": 2.4},
+            "calidad x6 self x3": {"quality": 4.2, "coview": 0.0, "self": 2.4},
+        }
+        for name, change in configs.items():
+            v1.W.update(change)
+            results[name] = evaluate(lambda r: model.recommend(r["recent_views"], r["user_id"], r["page"]), test)
+            v1.W.clear()
+            v1.W.update(base)
+    if "--search" in sys.argv:   # búsqueda aleatoria de pesos; ordenada por SNIPS_buy
+        import random
+        rng = random.Random(19)
+        base = dict(v1.W)
+        grid = {"buy_after_view": [0, 1, 3, 6], "carousel": [0, 1, 2, 4], "coview": [0, 0.3, 1],
+                "self": [0, 0.8, 2, 4], "subcat": [0, 0.3, 0.6, 1.5], "copurchase": [1.2, 2.4, 5, 10],
+                "quality": [0, 0.3, 0.7, 1.5], "pop": [0, 1, 2, 4, 8]}
+        found = []
+        for i in range(int(next((a.split("=")[1] for a in sys.argv if a.startswith("--trials=")), 30))):
+            cfg = {k: rng.choice(vals) for k, vals in grid.items()}
+            v1.W.update(cfg)
+            res = evaluate(lambda r: model.recommend(r["recent_views"], r["user_id"], r["page"]), test)
+            found.append((res["SNIPS_buy"], cfg, res))
+            print(f"  prueba {i + 1}: SNIPS_buy={res['SNIPS_buy']} buy_ndcg={res['buy_ndcg']}")
+            v1.W.clear()
+            v1.W.update(base)
+        found.sort(key=lambda x: -x[0])
+        for k, (_, cfg, res) in enumerate(found[:5]):
+            results[f"top{k + 1}"] = res
+            print(f"top{k + 1}: W = {cfg}")
     if "--ablation" in sys.argv:
         for name in list(v1.W):
             old = v1.W[name]
