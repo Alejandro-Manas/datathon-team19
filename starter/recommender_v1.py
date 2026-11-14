@@ -51,6 +51,9 @@ Record = dict[str, Any]
 # Ver resultados: python starter/ab_report.py 3
 SHARE_CONTROL = 0.10
 FINAL_MODE = False
+# Si se pone el nombre de una variante, TODOS los clientes la reciben (sin control ni bandit).
+# Sirve para ver su resultado real "a solas" en el leaderboard. None = funcionamiento normal (bandit).
+FORCE_VARIANT = "electropapis v1"
 STATS_HOURS = 12            # ventana de feedback que usa el bandit
 
 # Pesos de cada señal (a ajustar con eval_v1.py)
@@ -74,7 +77,7 @@ VARIANTS = {
     "v1-self": {**W_FIXED, "self": 2.4},                                       # + lo que acaba de ver
     "v1-pop-cp2": {**W_FIXED, "pop": 1.0, "copurchase": 2.4, "coview": 0.3},   # combinación
     # mejor combinación de la búsqueda offline (eval_v1.py --search, 14/11 13:29): SNIPS_buy 0.064 vs 0.025 de v1
-    "v1-search": {**W_FIXED, "buy_after_view": 3, "carousel": 2, "coview": 1, "self": 2, "subcat": 1.5,
+    "electropapis v1": {**W_FIXED, "buy_after_view": 3, "carousel": 2, "coview": 1, "self": 2, "subcat": 1.5,
                   "copurchase": 10, "quality": 0, "pop": 1},
 }
 DECAY = 0.6               # peso de la vista k-ésima más reciente: DECAY**k
@@ -247,6 +250,7 @@ class Model:
         self.subcat_of: dict[str, str] = {}
         self.cat_of: dict[str, str] = {}
         self.price_of: dict[str, float] = {}
+        self.new_products: set[str] = set()
         self.sales: dict[str, tuple[float, float]] = {}
         self.subcat_top: dict[str, list[tuple[str, float]]] = {}
         self.available: set[str] = set()
@@ -299,6 +303,7 @@ class Model:
                 available.add(p)
                 by_sub[r["subcategory"]].append(p)
         self.subcat_of, self.cat_of, self.price_of = subcat_of, cat_of, price_of
+        self.new_products = {r["product_id"] for r in rows if r.get("is_new") in (1, True, "1")}
         self.subcat_top = {s: self._rank_norm(ps) for s, ps in by_sub.items()}
         self.popular = [p for p in sorted(available, key=lambda p: -self._prior(p))]
         self.available = available
@@ -399,20 +404,22 @@ GROUP BY v""", 30)
         base = ctrl[1] / ctrl[0] if ctrl[0] else None
         total = sum(n for n, _ in self.stats.values()) or 1
         print(f"\n[{time.strftime('%H:%M')}] Rendimiento en vivo (últimas {STATS_HOURS} h, compras reales):")
-        print(f"  {'versión':<12}{'clientes':>9}{'compras':>9}{'% compra':>10}{'vs baseline':>13}{'% tráfico':>11}")
+        print(f"  {'versión':<16}{'clientes':>9}{'compras':>9}{'% compra':>10}{'vs baseline':>13}{'% tráfico':>11}")
         if ctrl[0]:
-            print(f"  {'control':<12}{ctrl[0]:>9}{ctrl[1]:>9}{base:>10.2%}{'—':>13}{'':>11}")
+            print(f"  {'control':<16}{ctrl[0]:>9}{ctrl[1]:>9}{base:>10.2%}{'—':>13}{'':>11}")
         for v, (n, b) in sorted(self.stats.items(), key=lambda x: -(x[1][1] / x[1][0] if x[1][0] else 0)):
             rate = b / n if n else 0.0
             lift = f"{(rate / base - 1):+.0%}" if base and n else "—"
             star = "  ← IA" if v == "v2-gbm" else ""
-            print(f"  {v:<12}{n:>9}{b:>9}{rate:>10.2%}{lift:>13}{n / total:>11.0%}{star}")
+            print(f"  {v:<16}{n:>9}{b:>9}{rate:>10.2%}{lift:>13}{n / total:>11.0%}{star}")
         print(f"  → mejor ahora: {self.best()} (pocas compras = mucha suerte: fiable a partir de ~50 compras por versión)\n")
 
     def best(self) -> str:
         return max(VARIANTS, key=lambda v: (self.stats.get(v, (0, 0))[1] + 1) / (self.stats.get(v, (0, 0))[0] + 100))
 
     def choose(self) -> str:
+        if FORCE_VARIANT:
+            return FORCE_VARIANT
         if FINAL_MODE:
             return self.best()
         # prior Beta(1, 99) ≈ tasa del 1 %: sin datos, todas empiezan igual
@@ -488,7 +495,7 @@ def main() -> None:
             answers = []
             for req in fresh:
                 seen.add(req["request_id"])
-                if not FINAL_MODE and zlib.crc32(req["request_id"].encode()) % 1000 < SHARE_CONTROL * 1000:
+                if not FINAL_MODE and not FORCE_VARIANT and zlib.crc32(req["request_id"].encode()) % 1000 < SHARE_CONTROL * 1000:
                     arm = "control"
                 else:
                     arm = BANDIT.choose()

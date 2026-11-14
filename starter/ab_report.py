@@ -32,10 +32,10 @@ INNER JOIN (SELECT request_id::String AS request_id, any(model_version::String) 
 GROUP BY arm ORDER BY arm""", 60)
 
 print(f"Últimas {hours:g} h\n")
-print(f"{'versión':<14}{'peticiones':>11}{'a tiempo':>10}{'CTR':>8}{'compras %':>11}{'±95%':>8}{'€/petición':>12}{'p95 ms':>9}")
+print(f"{'versión':<18}{'peticiones':>11}{'a tiempo':>10}{'CTR':>8}{'compras %':>11}{'±95%':>8}{'€/petición':>12}{'p95 ms':>9}")
 for r in rows:
     n = int(r["n"]) or 1
     p = int(r["buys"]) / n
     err = 1.96 * math.sqrt(p * (1 - p) / n)
-    print(f"{r['arm']:<14}{n:>11}{int(r['on_time']) / n:>10.1%}{int(r['clicks']) / n:>8.2%}"
+    print(f"{r['arm']:<18}{n:>11}{int(r['on_time']) / n:>10.1%}{int(r['clicks']) / n:>8.2%}"
           f"{p:>11.2%}{err:>8.2%}{float(r['revenue']) / n:>12.3f}{float(r['p95_ms']):>9.0f}")
