@@ -51,7 +51,7 @@ Record = dict[str, Any]
 #   - FINAL_MODE = True (domingo): sin control y, para cada tipo de cliente, siempre su mejor variante.
 # Ver resultados: python starter/ab_report.py 3        ·   por tipo de cliente: python starter/ab_report.py 3 grupos
 SHARE_CONTROL = 0.05
-FINAL_MODE = False
+FINAL_MODE = True
 # Si se pone el nombre de una variante, TODOS los clientes la reciben (sin control ni bandit).
 # Sirve para ver su resultado real "a solas" en el leaderboard. None = funcionamiento normal (bandit).
 FORCE_VARIANT = None
