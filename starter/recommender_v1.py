@@ -18,16 +18,14 @@ stock, tendencias y co-visitas en vivo sin bloquear el bucle de respuesta.
 """
 from __future__ import annotations
 
-import datetime as dt
 import json
 import os
 import random
-import sys
 import threading
 import time
 import traceback
 import zlib
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -57,9 +55,6 @@ FINAL_MODE = True
 # Si se pone el nombre de una variante, TODOS los clientes la reciben (sin control ni bandit).
 # Sirve para ver su resultado real "a solas" en el leaderboard. None = funcionamiento normal (bandit).
 FORCE_VARIANT = None
-# A/B limpio entre variantes concretas (salta el bandit): el resto del tráfico tras el control se reparte a partes
-# iguales entre ellas, por hash del request_id. None = funcionamiento normal (bandit).
-AB_TEST = ("electropapis v1", "electropapis v2")
 STATS_HOURS = 12            # ventana de feedback que usa el bandit
 
 # Pesos de cada señal (a ajustar con eval_v1.py)
@@ -87,8 +82,6 @@ VARIANTS = {
                   "copurchase": 4},                                           # en ficha: lo que está mirando ahora
     "ep-novedad": {**EP, "subcat": 3, "live_cooc": 4, "trend": 2, "pop": 2},  # nuevos / productos nuevos: tendencia y parecidos
     "ep-tendencia": {**EP, "trend": 3, "live_cooc": 3},                       # lo que se mueve hoy en la tienda
-    # electropapis v2: v1 + aprendizaje por producto en vivo (cuánto se compra cada producto cuando lo mostramos)
-    "electropapis v2": {**EP, "live_lift": 1.0},
 }
 # Variantes especializadas por tipo de cliente, afinadas con el histórico por tune_segments.py.
 # "ep-seg-<tipo>" solo compite con los clientes de ese tipo. Se cargan al arrancar si existe el archivo.
@@ -249,16 +242,6 @@ SELECT product_id::String AS product_id, countIf(event_type = 'purchase') AS buy
 FROM shop.events WHERE ts::DateTime64(3) > now() - INTERVAL 24 HOUR
 GROUP BY product_id"""
 
-LIFT_HOURS = 6     # ventana del aprendizaje por producto
-LIFT_PRIOR = 3.0   # suavizado: un producto necesita ~3 compras "esperadas" de evidencia para moverse mucho
-SQL_ITEM_SLOTS = f"""
-SELECT p, k, count() AS n, countIf(pur = p) AS b
-FROM (SELECT CAST(shown, 'Array(String)') AS sh, ifNull(purchased::String, '') AS pur
-      FROM {{team}}.feedback
-      WHERE request_id::String != '__init__' AND ts::DateTime64(3) > now() - INTERVAL {LIFT_HOURS} HOUR)
-ARRAY JOIN sh AS p, arrayEnumerate(sh) AS k
-GROUP BY p, k"""
-
 SQL_LIVE_COOC = f"""
 SELECT a.product_id AS p, b.product_id AS q,
        count() + 3 * countIf(b.event_type = 'purchase') + countIf(b.event_type = 'add_to_cart') AS n
@@ -291,8 +274,6 @@ class Model:
         self.price_of: dict[str, float] = {}
         self.new_products: set[str] = set()
         self.pop_24h: dict[str, float] = {}
-        self.live_lift: dict[str, float] = {}
-        self.slot_rate: dict[int, float] = {}
         self.base_price: dict[str, float] = {}
         self.sales: dict[str, tuple[float, float]] = {}
         self.subcat_top: dict[str, list[tuple[str, float]]] = {}
@@ -369,31 +350,6 @@ class Model:
         top = max(d.values(), default=1.0) or 1.0
         self.pop_24h = {p: (x / top) ** 0.5 for p, x in d.items()}   # compras en la tienda en las últimas 24 h
 
-    def refresh_live_lift(self) -> None:
-        """Aprendizaje por producto en vivo. Para cada producto que hemos mostrado en las últimas horas:
-        compras reales / compras esperadas según los huecos en que salió (el hueco 1 vende más que el 10).
-        > 1 = se compra más de lo normal cuando lo mostramos; < 1 = menos. Suavizado hacia 1 con LIFT_PRIOR."""
-        rows = query(SQL_ITEM_SLOTS.format(team=TEAM), 60)
-        slot_n: dict[int, float] = defaultdict(float)
-        slot_b: dict[int, float] = defaultdict(float)
-        for r in rows:
-            slot_n[int(r["k"])] += float(r["n"])
-            slot_b[int(r["k"])] += float(r["b"])
-        rate = {k: slot_b[k] / slot_n[k] for k in slot_n if slot_n[k]}
-        exp: dict[str, float] = defaultdict(float)
-        got: dict[str, float] = defaultdict(float)
-        for r in rows:
-            exp[r["p"]] += float(r["n"]) * rate.get(int(r["k"]), 0.0)
-            got[r["p"]] += float(r["b"])
-        lift = {p: (got[p] + LIFT_PRIOR) / (exp[p] + LIFT_PRIOR) for p in exp}
-        self.live_lift = {p: min(3.0, max(0.33, x)) for p, x in lift.items()}
-        self.slot_rate = rate
-        if lift:
-            top = sorted(self.live_lift.items(), key=lambda x: -x[1])[:3]
-            print(f"[aprendizaje por producto] {len(lift)} productos con datos · huecos 1/5/10 venden "
-                  f"{rate.get(1, 0):.2%}/{rate.get(5, 0):.2%}/{rate.get(10, 0):.2%} · más por encima de lo esperado: "
-                  + ", ".join(f"{p} ×{x:.2f}" for p, x in top))
-
     def refresh_live_cooc(self) -> None:
         self.live_cooc = neighbors(query(SQL_LIVE_COOC, 120))
 
@@ -450,10 +406,6 @@ class Model:
         for p in bought:
             if p in score:
                 score[p] *= ALREADY_BOUGHT
-        beta = W.get("live_lift", 0.0)
-        if beta and self.live_lift:   # electropapis v2: sube lo que hoy se compra más de lo esperado, baja lo que menos
-            for p in score:
-                score[p] *= self.live_lift.get(p, 1.0) ** beta
         return score
 
 
@@ -581,7 +533,7 @@ BANDIT = Bandit()
 
 # ---------------------------------------------------------------- bucle en vivo
 NEW_REQUESTS = """
-SELECT request_id::String AS request_id, toString(ts::DateTime64(3)) AS ts, user_id::String AS user_id, is_new_user,
+SELECT request_id::String AS request_id, user_id::String AS user_id, is_new_user,
        context.page::String AS page, context.device::String AS device, recent_views
 FROM shop.requests
 ORDER BY ts DESC
@@ -601,9 +553,8 @@ def save_segments(segs: list[Record]) -> None:
 
 def refresher(model: Model, stop: threading.Event) -> None:
     last = defaultdict(float)
-    every = {"catalog": 3, "trend": 60, "purchases": 60, "live_cooc": 300, "bandit": 120, "lift": 120}
-    jobs = {"bandit": BANDIT.refresh, "lift": model.refresh_live_lift, "catalog": model.refresh_catalog,
-            "trend": model.refresh_trend,
+    every = {"catalog": 3, "trend": 60, "purchases": 60, "live_cooc": 300, "bandit": 120}
+    jobs = {"bandit": BANDIT.refresh, "catalog": model.refresh_catalog, "trend": model.refresh_trend,
             "purchases": model.refresh_live_purchases, "live_cooc": model.refresh_live_cooc}
     while not stop.is_set():
         for name, fn in jobs.items():
@@ -616,62 +567,11 @@ def refresher(model: Model, stop: threading.Event) -> None:
         time.sleep(0.5)
 
 
-DRY_RUN = "--dry-run" in sys.argv
-DRY_MINUTES = float(next((a.split("=")[1] for a in sys.argv if a.startswith("--minutes=")), 3))
-
-
-class DryRunStats:
-    """Modo ensayo: calcula todo con clientes reales pero NO envía nada. Resume validez, tiempos y reparto."""
-
-    def __init__(self) -> None:
-        self.n = self.invalid = self.errors = 0
-        self.compute_ms: list[float] = []
-        self.delay_s: list[float] = []
-        self.by_seg: dict[str, Counter] = defaultdict(Counter)
-        self.start = time.time()
-
-    def add(self, req: dict, sg: str, arm: str, items: list[str], ms: float, model: "Model", failed: bool) -> None:
-        self.n += 1
-        self.errors += failed
-        self.invalid += len(set(items)) != 10 or any(p not in model.available for p in items)
-        self.compute_ms.append(ms)
-        self.by_seg[sg][arm] += 1
-        try:
-            t = dt.datetime.strptime(req["ts"][:23], "%Y-%m-%d %H:%M:%S.%f").replace(tzinfo=dt.timezone.utc)
-            self.delay_s.append((dt.datetime.now(dt.timezone.utc) - t).total_seconds())
-        except Exception:
-            pass
-
-    @staticmethod
-    def _p(xs: list[float], q: float) -> float:
-        return sorted(xs)[min(len(xs) - 1, int(q * len(xs)))] if xs else 0.0
-
-    def report(self, final: bool = False) -> None:
-        print(f"\n{'=' * 20} ENSAYO {'(RESULTADO FINAL) ' if final else ''}· {time.strftime('%H:%M:%S')} {'=' * 20}")
-        print(f"  clientes reales procesados: {self.n} en {(time.time() - self.start) / 60:.1f} min (no se ha enviado nada)")
-        print(f"  respuestas inválidas: {self.invalid}   ·   errores (cubiertos con relleno): {self.errors}")
-        print(f"  cálculo por cliente: mediana {self._p(self.compute_ms, .5):.1f} ms · p95 {self._p(self.compute_ms, .95):.1f} ms")
-        if self.delay_s:
-            late = sum(1 for d in self.delay_s if d > 2.5)
-            print(f"  respuesta lista a los: mediana {self._p(self.delay_s, .5):.2f} s · p95 {self._p(self.delay_s, .95):.2f} s "
-                  f"desde que llega el cliente (límite 3 s; >2,5 s: {late})")
-        print("  reparto por tipo de cliente:")
-        for sg in SEGMENTS:
-            c = self.by_seg.get(sg)
-            if c:
-                tot = sum(c.values())
-                top = ", ".join(f"{a} {k / tot:.0%}" for a, k in c.most_common(4))
-                print(f"    {SEGMENT_NAMES[sg]:<22} {tot:>5} clientes → {top}")
-        print("=" * 60 + "\n")
-
-
 def main() -> None:
-    if DRY_RUN:
-        print(f"*** MODO ENSAYO: {DRY_MINUTES:g} minutos con clientes reales, sin enviar nada a RawTree ***")
     model = Model()
     model.build_history()
     model.refresh_catalog()
-    for fn in (model.refresh_trend, model.refresh_live_purchases, model.refresh_live_cooc, model.refresh_live_lift):
+    for fn in (model.refresh_trend, model.refresh_live_purchases, model.refresh_live_cooc):
         try:
             fn()
         except Exception as e:
@@ -699,17 +599,9 @@ def main() -> None:
 
     seen: set[str] = set()
     n_total, t_report = 0, time.time()
-    dry = DryRunStats() if DRY_RUN else None
-    first = True
     while True:
-        if dry and time.time() - dry.start > DRY_MINUTES * 60:
-            dry.report(final=True)
-            return
         try:
             fresh = [r for r in query(NEW_REQUESTS) if r["request_id"] not in seen]
-            if dry and first:          # en el ensayo, ignorar las peticiones que ya estaban antes de empezar
-                seen.update(r["request_id"] for r in fresh)
-                fresh, first = [], False
             answers, segs = [], []
             for req in fresh:
                 seen.add(req["request_id"])
@@ -719,11 +611,8 @@ def main() -> None:
                     sg = "producto"
                 if not FINAL_MODE and not FORCE_VARIANT and zlib.crc32(req["request_id"].encode()) % 1000 < SHARE_CONTROL * 1000:
                     arm = "control"
-                elif AB_TEST and not FORCE_VARIANT:
-                    arm = AB_TEST[zlib.crc32(("ab" + req["request_id"]).encode()) % len(AB_TEST)]
                 else:
                     arm = BANDIT.choose(sg)
-                t_req, failed = time.perf_counter(), False
                 try:
                     if arm == "control":
                         items = model.baseline()
@@ -736,17 +625,10 @@ def main() -> None:
                         raise ValueError(f"lista inválida: {items}")
                 except Exception:
                     traceback.print_exc()
-                    items, failed = model.popular[:10], True
-                if dry:
-                    dry.add(req, sg, arm, items, 1000 * (time.perf_counter() - t_req), model, failed)
+                    items = model.popular[:10]
                 answers.append({"request_id": req["request_id"], "items": items, "model_version": arm})
                 segs.append({"kind": "segment", "request_id": req["request_id"], "segment": sg})
-            if answers and dry:
-                n_total += len(answers)
-                if time.time() - t_report > 30:
-                    dry.report()
-                    t_report = time.time()
-            elif answers:
+            if answers:
                 http.post(f"{API}/v1/tables/submissions", params={"database": TEAM},
                           json=answers, timeout=10).raise_for_status()
                 n_total += len(answers)
